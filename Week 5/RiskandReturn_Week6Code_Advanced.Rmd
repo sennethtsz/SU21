@@ -1,0 +1,330 @@
+---
+title: "RiskandReturn_Week6_Advanced"
+author: "DJ"
+date: "25/02/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+```
+
+#Installing packages as needed
+
+#NOTE: This statement essentially checks if PerformanceAnalytics package is available
+#locally in your R library distribution. If not, it will install it and then include it
+#as a part of this code, so that we can use its functions and features
+
+```{r}
+if (!require(tidyverse)) install.packages("tidyverse")
+if (!require(tidyquant)) install.packages("tidyquant")
+if (!require(PerformanceAnalytics)) install.packages("PerformanceAnalytics")
+if (!require(xts)) install.packages("xts")
+if (!require(lubridate)) install.packages("lubridate")
+if (!require(Quandl)) install.packages("Quandl")
+if (!require(riingo)) install.packages("riingo")
+```
+
+#Package Details
+
+#1) Tidyverse: The tidyverse is an opinionated collection of R packages designed for data science. All packages share an underlying design philosophy, grammar, and data structures: https://www.tidyverse.org/
+
+#2)Tidyquant: The 'tidyquant' package provides a convenient wrapper to various 'xts', 'zoo', 'quantmod' and 'TTR' package functions and returns the objects in the tidy 'tibble' format. The main advantage is being able to use quantitative functions with the 'tidyverse' functions including 'purrr', 'dplyr', 'tidyr', 'ggplot2', 'lubridate', etc: https://www.rdocumentation.org/packages/tidyquant/versions/0.3.0
+
+#3)Performanceanalytics: A very useful package for investment and financial performance and risk 
+#analytics. Official Documentation: https://www.rdocumentation.org/packages/PerformanceAnalytics/versions/1.5.3
+#Presentation Deck by Package Founders: http://past.rinfinance.com/RinFinance2009/presentations/PA%20Workshop%20Chi%20RFinance%202009-04.pdf
+#Quick Video on calculating returns: https://www.youtube.com/watch?v=0rAVPUNf9yI
+
+#4) xts: xts is a useful packge useful in time-series analysis. We use xts package here since
+#PerformanceAnalytics functions usually require xts objects (time-series of prices etc.) rather than simple
+#lists of prices for more accurate performance evaluation
+
+#5) lubridate: lubridate is a date mainpulation package. We use mdy() function of lubridate to standardize dates of our data 
+#Useful Resource: https://raw.githubusercontent.com/rstudio/cheatsheets/master/lubridate.pdf
+
+#6) Quandl: Get millions of financial and economic datasets from hundreds of publishers directly into R. (https://www.quandl.com/tools/r)
+
+#7) An R Interface to the 'Tiingo' Stock Price API: https://cran.r-project.org/web/packages/riingo/riingo.pdf
+
+
+```{r}
+library(tidyverse)
+library(tidyquant)
+library(PerformanceAnalytics)
+library(xts)
+library(lubridate)
+library(Quandl)
+library(riingo)
+```
+
+Examples of packages we can use to download stock data using API
+
+#1 Riingo
+```{r}
+# Need to sign up for a free api key at tiingo
+# api_key <-  config::get("tiingo", file = "config.yml")
+
+api_key <-  "224f4bd36f0875f94c4cb328cba5f1716d4aad64"
+# Need to set the key so this R session can pass it to the Tiingo API
+riingo_set_token(api_key)
+
+# These are our tickers of interest
+tickers <- c(
+"SPY",
+"EFA",
+"IJS",
+"EEM",
+"AGG",
+"TLT",
+"VNQ")
+tickers <- "SPY"
+
+# Now we can use the `riingo_prices()` function from the `riingo` package. Can look at docs for riingo package to see what the function returns.
+
+prices_volume_via_api_2020 <- 
+  tickers %>% 
+  riingo_prices(start_date = "2020-01-01", end_date = Sys.Date()) %>% 
+  select(ticker, date, close, volume) %>% 
+  mutate(date = ymd(date))
+
+?riingo_prices()
+
+prices_volume_via_api_2020 %>% 
+  head()
+```
+
+#2 Tidyquant
+
+```{r}
+prices_volume_via_tq_2020 <- 
+  tickers %>% 
+  tq_get(get = "stock.price", from = "2020-01-01") %>% 
+  select(date,ticker = symbol, close, volume) %>%
+  mutate(date = as.Date(date))
+```
+
+#3 Quandl
+
+```{r}
+Quandl.api_key("9aKMYc6XUnLgxw4hS1kM")
+market <- Quandl("BCIW/_INX", start_date="2010-01-01", end_date=Sys.Date())
+```
+
+#Financial asset (individual stocks, securities, etc) and portfolio (groups of stocks, securities, etc) performance analysis is a deep field with a wide range of theories and methods for analyzing risk versus reward. The PerformanceAnalytics package consolidates functions to compute many of the most widely used performance metrics. tidquant integrates this functionality so it can be used at scale using the split, apply, combine framework within the tidyverse. Two primary functions integrate the performance analysis functionality:
+
+##tq_performance implements the performance analysis functions in a tidy way, enabling scaling analysis using the split, apply, combine framework.
+##tq_portfolio provides a useful tool set for aggregating a group of individual asset returns into one or many portfolios.
+
+#An important concept is that performance analysis is based on the statistical properties of returns (not prices). As a result, this package uses inputs of time-based returns as opposed to stock prices. The arguments change to Ra for the asset returns and Rb for the baseline returns. We’ll go over how to get returns in the Workflow section.
+
+#Another important concept is the baseline. The baseline is what you are measuring performance against. A baseline can be anything, but in many cases it’s a representative average of how an investment might perform with little or no effort. Often indexes such as the S&P500 are used for general market performance. Other times more specific Exchange Traded Funds (ETFs) are used such as the SPDR Technology ETF (XLK). The important concept here is that you measure the asset performance (Ra) against the baseline (Rb).
+
+
+# Getting the Asset Period Returns
+# Use tq_get() to get stock prices.
+```{r}
+stock_prices <- c("AAPL", "GOOG", "NFLX") %>%
+    tq_get(get  = "stock.prices",
+           from = "2010-01-01",
+           to   = Sys.Date())
+```
+
+
+# Using the tidyverse split, apply, combine framework, we can mutate groups of stocks by first “grouping” with group_by and then applying a mutating function using tq_transmute. We use the quantmod function periodReturn as the mutating function. We pass along the arguments period = "monthly" to return the results in monthly periodicity. Last, we use the col_rename argument to rename the output column.
+```{r}
+stock_returns_monthly <- stock_prices %>%
+    group_by(symbol) %>%
+    tq_transmute(select     = adjusted, 
+                 mutate_fun = periodReturn, 
+                 period     = "monthly", 
+                 col_rename = "Ra")
+```
+
+# Getting SPDR Technology ETF i.e.XLK (Baseline for Market) Returns 
+```{r}
+baseline_returns_monthly <- "XLK" %>%
+    tq_get(get  = "stock.prices",
+           from = "2010-01-01",
+           to   = Sys.Date()) %>%
+    tq_transmute(select     = adjusted, 
+                 mutate_fun = periodReturn, 
+                 period     = "monthly", 
+                 col_rename = "Rb")
+```
+
+#The tidyquant function, tq_portfolio() aggregates a group of individual assets into a single return using a weighted composition of the underlying assets. To do this we need to first develop portfolio weights. We supplying a vector of weights and form the portfolio.
+
+```{r}
+wts <- c(0.5, 0.0, 0.5)
+portfolio_returns_monthly <- stock_returns_monthly %>%
+    tq_portfolio(assets_col  = symbol, 
+                 returns_col = Ra, 
+                 weights     = wts, 
+                 col_rename  = "Ra")
+```
+
+# Now that we have the aggregated portfolio returns (“Ra”) and the baseline returns (“Rb”), we can merge to get our consolidated table of asset and baseline returns. Nothing new here.
+
+```{r}
+RaRb_single_portfolio <- left_join(portfolio_returns_monthly, 
+                                   baseline_returns_monthly,
+                                   by = "date")
+```
+
+# Computing the CAPM Table
+# The CAPM table is computed with the function table.CAPM from PerformanceAnalytics.
+
+```{r}
+RaRb_single_portfolio %>%
+    tq_performance(Ra = Ra, Rb = Rb, performance_fun = table.CAPM)
+```
+
+# First, we need to grow our portfolios. tidyquant has a handy, albeit simple, function, tq_repeat_df(), for scaling a single portfolio to many. It takes a data frame, and the number of repeats, n, and the index_col_name, which adds a sequential index. Let’s see how it works for our example. We need three portfolios:
+
+```{r}
+stock_returns_monthly_multi <- stock_returns_monthly %>%
+    tq_repeat_df(n = 3)
+```
+
+#Examining the results, we can see that a few things happened:
+
+##The length (number of rows) has tripled. This is the essence of tq_repeat_df: it grows the data frame length-wise, repeating the data frame n times. In our case, n = 3.
+##Our data frame, which was grouped by symbol, was ungrouped. This is needed to prevent tq_portfolio from blending on the individual stocks. tq_portfolio only works on groups of stocks.
+##We have a new column, named “portfolio”. The “portfolio” column name is a key that tells tq_portfolio that multiple groups exist to analyze. Just note that for multiple portfolio analysis, the “portfolio” column name is required.
+##We have three groups of portfolios. This is what tq_portfolio will split, apply (aggregate), then combine on.
+
+#Now the tricky part: We need a new table of weights to map on. There’s a few requirements:
+
+##We must supply a three column tibble with the following columns: “portfolio”, asset, and weight in that order.
+##The “portfolio” column must be named “portfolio” since this is a key name for mapping.
+##The tibble must be grouped by the portfolio column.
+
+#Here’s what the weights table should look like:
+
+```{r}
+weights <- c(
+    0.50, 0.25, 0.25,
+    0.25, 0.50, 0.25,
+    0.25, 0.25, 0.50
+)
+stocks <- c("AAPL", "GOOG", "NFLX")
+weights_table <-  tibble(stocks) %>%
+    tq_repeat_df(n = 3) %>%
+    bind_cols(tibble(weights)) %>%
+    group_by(portfolio)
+weights_table
+```
+
+# Now just pass the the expanded stock_returns_monthly_multi and the weights_table to tq_portfolio for portfolio aggregation.
+
+```{r}
+portfolio_returns_monthly_multi <- stock_returns_monthly_multi %>%
+    tq_portfolio(assets_col  = symbol, 
+                 returns_col = Ra, 
+                 weights     = weights_table, 
+                 col_rename  = "Ra")
+```
+
+#we merge with the baseline using “date” as the key.
+```{r}
+RaRb_multiple_portfolio <- left_join(portfolio_returns_monthly_multi, 
+                                     baseline_returns_monthly,
+                                     by = "date")
+```
+
+```{r}
+RaRb_multiple_portfolio %>%
+    tq_performance(Ra = Ra, Rb = Rb, performance_fun = table.CAPM)
+```
+
+# Let’s see an example of passing parameters. Suppose we want to instead see how our money is grows for a $1,000 investment. We’ll use the “Single Portfolio” example, where our portfolio mix was 50% AAPL, 0% GOOG, and 50% NFLX.
+
+```{r}
+wts <- c(0.5, 0.0, 0.5)
+portfolio_returns_monthly <- stock_returns_monthly %>%
+    tq_portfolio(assets_col  = symbol, 
+                 returns_col = Ra, 
+                 weights     = wts, 
+                 col_rename  = "Ra")
+```
+
+```{r}
+portfolio_returns_monthly %>%
+    ggplot(aes(x = date, y = Ra)) +
+    geom_bar(stat = "identity", fill = palette_light()[[1]]) +
+    labs(title = "Portfolio Returns",
+         subtitle = "50% AAPL, 0% GOOG, and 50% NFLX",
+         caption = "Shows an above-zero trend meaning positive returns",
+         x = "", y = "Monthly Returns") +
+    geom_smooth(method = "lm") +
+    theme_tq() +
+    scale_color_tq() +
+    scale_y_continuous(labels = scales::percent)
+```
+
+# This is good, but we want to see how our $10,000 initial investment is growing. This is simple with the underlying Return.portfolio argument, wealth.index = TRUE. All we need to do is add these as additional parameters to tq_portfolio!
+
+```{r}
+wts <- c(0.5, 0, 0.5)
+portfolio_growth_monthly <- stock_returns_monthly %>%
+    tq_portfolio(assets_col   = symbol, 
+                 returns_col  = Ra, 
+                 weights      = wts, 
+                 col_rename   = "investment.growth",
+                 wealth.index = TRUE) %>%
+    mutate(investment.growth = investment.growth * 1000)
+```
+
+```{r}
+portfolio_growth_monthly %>%
+    ggplot(aes(x = date, y = investment.growth)) +
+    geom_line(size = 2, color = palette_light()[[1]]) +
+    labs(title = "Portfolio Growth",
+         subtitle = "50% AAPL, 0% GOOG, and 50% NFLX",
+         caption = "Now we can really visualize performance!",
+         x = "", y = "Portfolio Value") +
+    geom_smooth(method = "loess") +
+    theme_tq() +
+    scale_color_tq() +
+    scale_y_continuous(labels = scales::dollar)
+```
+
+#Finally, taking this one step further, we apply the same process to the “Multiple Portfolio” example:
+
+##50% AAPL, 25% GOOG, 25% NFLX
+##25% AAPL, 50% GOOG, 25% NFLX
+##25% AAPL, 25% GOOG, 50% NFLX
+
+```{r}
+portfolio_growth_monthly_multi <- stock_returns_monthly_multi %>%
+    tq_portfolio(assets_col   = symbol, 
+                 returns_col  = Ra, 
+                 weights      = weights_table, 
+                 col_rename   = "investment.growth",
+                 wealth.index = TRUE) %>%
+    mutate(investment.growth = investment.growth * 1000)
+```
+
+```{r}
+portfolio_growth_monthly_multi %>%
+    ggplot(aes(x = date, y = investment.growth, color = factor(portfolio))) +
+    geom_line(size = 2) +
+    labs(title = "Portfolio Growth",
+         subtitle = "Comparing Multiple Portfolios",
+         caption = "Portfolio 3 is a Standout!",
+         x = "", y = "Portfolio Value",
+         color = "Portfolio") +
+    geom_smooth(method = "loess") +
+    theme_tq() +
+    scale_color_tq() +
+    scale_y_continuous(labels = scales::dollar)
+```
+
+
+
+
+
+
+
+

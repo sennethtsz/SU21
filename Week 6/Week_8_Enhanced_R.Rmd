@@ -1,0 +1,368 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+# Week 8: Factor Investing 
+
+---
+
+### Libraries we will be using:
+
+For this week we will be using some of the same packages used in the other finance modules:
+
+- dplyr: This package allows us increased flexibility and simplified syntax for applying data frame operations.
+
+- ggplot2: This package allows us greatly improved plotting functionality in comparison to base R
+
+- tidyquant: This package allows us to scrape stock data from the web using a user friendly api. To use this package, you must not only have it installed and loaded, but you must also have an account and api key with tiingo (but don't worry its free). Their website, how to register, and how to receive your personal api key can be found at https://www.tiingo.com/.
+
+- xts: This package allows us to better manage time series objects in R which is especially important when dealing with financial data.
+
+- PerforamnceAnalytics: This package gives us access to a wide variety of functions directly applicable to financial series data. These functions will greatly reduce the amount of manual coding we will have to do when dealing with common ratios, metrics, and return calculations and conversions.
+
+- Zoo: This package provides some backend support and enhanced functionality when paired with the xts library. 
+
+- Lubridate: This package also adds additional functionality when dealing with time series objects.
+
+
+```{r}
+library(tidyquant)
+library(xts)
+library(PerformanceAnalytics)
+library(dplyr)
+library(ggplot2)
+library(zoo)
+library(lubridate)
+library(xts)
+```
+
+### Setting up Tidyquant's API Key:
+
+Now that we have our packages loaded in, there are a couple of things we need to do prior to being able to use the full functionality of Tidyquant. As mentioned above we will need to register your unique API key with the package so that we can successfully query stock data from the web. This process is simple just copy your personal api key you created at https://www.tiingo.com/ and assign it to a variable as a string. Then use the "tiingo_api_key(key)" function to register your key with this R session as the example below illustrates.
+
+
+```{r}
+personal_tiingo_api_key = '769f1913c5a6b136ab607b83b2900335ba94de21'
+tiingo_api_key(personal_tiingo_api_key)
+```
+
+Note: There are ways to make your api_key work on all R sessions on your local computer by registering the api_key with the global R environment. We won't cover this process here as it is local machine specific. However, if you wish to learn more about this just check out the tidyquant documentation.
+
+---
+
+### Downloading our Factor Data from the Web:
+
+The first thing we are going to accomplish in this notebook is to fetch the historical factor data directly from the source. Kenneth French one of the two individuals responsible with developing factors models for finance, to this day maintains a current database of the factor data we are looking for at his personal website https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/data_library.html. If you navigate to the website, you will notice nearly 100 different options factor data models to choose from. As you can see, they maintain historical factor data on several different factor combinations, industries, and countries. Today however we will be sticking to only two datasets "Fama/French North American 5 Factors Daily" which contains all but one of our desired factors. To get the momentum factor we also need to download and format "North American Momentum Factor (Mom) Daily” and merge the two frames along dates to get a unified data frame for use in constructing the factor regression models. 
+
+Below we call a function get_french_factors to download and unzip both datasets. The function first checks to see if the data is already in your current directory if so you're good to go, but if not, it downloads them directly from the web and unzips them into your current working directory, and outputs "TRUE" if the operation was successful. If for any reason this function does not work on your local machine you can always just go to the website itself, download the files, and unzip them yourself, but hopefully this function should take that legwork out of the equation.  
+
+```{r}
+get_french_factors <- function(){
+    if (!("North_America_5_Factors_Daily.csv" %in% list.files() && "North_America_MOM_Factor_Daily.csv" %in% list.files())){
+
+        momentum_destination_path = paste(getwd(),"/North_America_Mom_Factor_Daily_CSV.zip",sep="")
+        five_factors_destination_path = paste(getwd(),"/North_America_5_Factors_Daily_CSV.zip",sep="")
+        momentum_url = "https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/North_America_Mom_Factor_Daily_CSV.zip"
+        five_factors_url = "https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/North_America_5_Factors_Daily_CSV.zip"
+        download.file(momentum_url,destfile = momentum_destination_path)
+        download.file(five_factors_url,destfile = five_factors_destination_path)
+        unzip(paste(getwd(),"/North_America_Mom_Factor_Daily_CSV.zip",sep=""))
+        unzip(paste(getwd(),"/North_America_5_Factors_Daily_CSV.zip",sep=""))
+        file.remove("North_America_Mom_Factor_Daily_CSV.zip")
+        file.remove("North_America_5_Factors_Daily_CSV.zip")
+    }
+}
+
+get_french_factors()
+```
+
+### Load and format our factor data files
+
+Now that we have our individual csv files containing the five-factor data and momentum data we can load both into R as data frames. However, a couple of things to note about the way the data is stored:
+
+- These CSV files will both have some un-needed blank lines and information for the first 6 lines of the document so when loading we will need to skip the first 6 rows
+
+- The information in these skipped rows is only there to tell the user where the data was retrieved from and how they indicate unavailable data entries within the dataset. which in this case is with the value -99.99
+
+- Using a value like -99.99 probably is not the best idea from a best practices standpoint as a user could easily miss this tidbit and have catastrophic model problems as a result. However, luckily the data we are dealing with will not have any of these missing entries.
+
+- Each CSV by default will store the date in string format of 'YYYYMMDD' so once our data frame is loaded we will need to use the ymd() function to properly convert our data column into a data datatype as opposed to character type.
+
+- We can also see that both of our date columns are initially labeled as "X" by default, lets also rename that column as well.
+
+Now let’s load and apply these changes to the momentum csv file with the code cell below: 
+
+```{r}
+momentum_frame = read.csv("North_America_MOM_Factor_Daily.csv",skip=6)
+momentum_frame = momentum_frame %>% rename(Date=X)
+momentum_frame$Date = ymd(momentum_frame$Date)
+head(momentum_frame)
+```
+
+As we can see from the first few rows everything looks good so far next, we do the same thing for our five-factor dataset.
+
+```{r}
+five_factor_frame = read.csv("North_America_5_Factors_Daily.csv",skip=6)
+five_factor_frame = five_factor_frame %>% rename(Date=X)
+five_factor_frame$Date = ymd(five_factor_frame$Date)
+head(five_factor_frame)
+```
+
+### Merge the two factor data frames
+
+Now that we have both data frames loaded properly we can use R's merge() function to perform an inner join of the two frames along the Date feature. The reason we choose an inner join here is because we can see from examining both data frames the momentum data does not go back quite as far as the five-factor data does, so we will need to throw away some of the older observations so that the times periods match exactly.
+
+We can also see that French stores the factor names with different acronyms than the ones used in class. So, we will need to go in and rename these columns according to the names we use in class for consistency. 
+
+    - WML = MOM (Momentum)
+    - CMA = BAB (Betting against Beta or Low Volatility)
+    - RMW = QMJ (Quality minus Junk or Profitability)
+
+Each of these operations is carried out in the code cell below. Also note the commented-out line of code that allows the user to write this new data frame to its own csv file for later use.
+
+
+```{r}
+merged_frame = merge(five_factor_frame,momentum_frame,by='Date')
+merged_frame = merged_frame %>% rename(MOM=WML) %>% rename(BAB=CMA) %>% rename(QMJ=RMW) %>% rename(MKT_RF=Mkt.RF)
+merged_frame = merged_frame %>% select(Date,RF,MKT_RF,HML,SMB,QMJ,BAB,MOM) 
+#write.table(merged_frame,file="Fama_French_Factors.csv",sep=",",row.names=F)
+head(merged_frame)
+```
+---
+
+### Looking at the Correlation of Factors:
+
+As noted in the Fama and French paper, there are some factors that resemble one another quite closely and are often proxies for one another given these relationships. To get a better view of this lets plot a correlation matrix of our factor values using the pairs() function as shown below. What does this correlation plot say about certain pairs of variables? Is it a good think that we have correlation among factor pairs?
+
+
+```{r}
+factors_paried = merged_frame %>% select(HML,SMB,QMJ,BAB,MOM)
+pairs(factors_paried,labels = colnames(factors_paried),  pch = 21)   
+```
+
+Ideally, we would like to see each of our correlation plots above appear trendless, mean-centered, and normal. However, as we can plainly see from pairs such as HML and BAB, QMJ and BAB, MOM and HML there appear to be some collinearity with respect to one another which could prove problematic as we use these factors to fit our factor regression model. Looking at the pairs that are strongly correlated it’s pretty evident that this correlation makes sense. For example, QMJ or profitability is correlated with low-risk stocks. This makes sense as companies that have high profitability ratios are less risk than ones with thinner operating margins. The same goes for HML or mega caps and BAB. Mega cap companies like Microsoft are far less risky than small caps which face a far greater chance of bankruptcy. The correlation seen in MOM and HML is less applicable to a straightforward explanation. One argument for this could be the survivorship bias among larger companies paired with the stock market's general trend towards steady increases or the notion that momentum gains in blue chip stocks drive market performance or is a leading indicator of market rallies. These theories are far less intuitive than the prior to so ponder them with a bit of caution. what is important to take away here is the at times subltle overlapping of these metrics with respect to one another. 
+
+---
+
+### Loading Stock Data:
+
+Now that we have our factor data organized its time to get the last piece of data required prior to building our factor model which is stock data. In the notebook we will use the same Tiingo api used in weeks 6 and 7 so this may look familiar to those of you who have gone through the advanced R code files for those weeks, and for those of you who haven't used this library before these advanced code files do a great job at introducing their functionality so check them out if you want to learn more out them and their use cases.
+
+Below we use the Tiingo api to query the daily prices for Microsoft stock ticker MSFT using a date range of 2017-12-31 to 2021-01-01. This function will output a data frame that includes a lot daily price information such as open, close, midpoint, ... etc., but for the purposes of this notebook we are only concerned with the daily stock returns (using adjusted closing price as our basis) which can be calculated from the other data using tidyquant's tq_transmutate() function. Note we also multiply by 100 to bring our returns into percentage form which is the same format used by our factor data. These operations on the data frame are demonstrated in the code cell below:
+
+
+```{r}
+MSFT_data = tq_get(x='MSFT',get="stock.price",from='2017-12-31',to='2021-01-01')
+MSFT_data = MSFT_data %>% tq_transmute(select=adjusted,mutate_fun=periodReturn,period="daily") %>% rename(Date=date) %>% rename(MSFT=daily.returns) %>% mutate(MSFT=MSFT*100)
+head(MSFT_data)
+```
+---
+
+### Merge Factor and Stock Data Frames:
+
+Now that our stock return data has been properly retrieved and formatted it’s time to merge its data frame with our factor data. Again, we use R's merge() function to perform an inner join on the Dates between the data frames which will match up each period's return to its corresponding factor entry. Once our frame is merged, we still have one last data transformation to perform prior to forming our factor model. Since we pulled the returns directly from the stocks prices, we have the stocks total basic daily return in order for the factor model to work properly we need to remove each daily return's respective risk free rate to get daily returns in excess of the risk free rate. This can be done fairly easily with the mutate() function provided by dplyr as shown in the cell below:
+
+```{r}
+joint_frame = merge(merged_frame,MSFT_data,by='Date')
+joint_frame = joint_frame %>% mutate(MSFT_RF=MSFT-RF) 
+head(joint_frame)
+```
+---
+
+### MSFT Performance vs. Market Performance
+
+Now that we have our data in place and properly formatted, let us see how our stock's performance compares over the same time horizon as the market before we jump into building our factor model. We can then plot the returns using the performance analytics library as we have done in past lessons to get a better visualization of how Microsoft performed relative to the market benchmark.
+
+```{r}
+stock_v_market = joint_frame %>% select(Date,MSFT_RF,MKT_RF,RF) %>% mutate(MSFT_RF=(MSFT_RF+RF)/100) %>% mutate(MKT_RF=(RF+MKT_RF)/100) %>% select(Date,MSFT_RF,MKT_RF)
+stock_v_market.xts = xts(stock_v_market[,-1],order.by=as.Date(stock_v_market[,1],"%Y%m%d"))
+chart.RelativePerformance(stock_v_market.xts[,1, drop=FALSE],stock_v_market.xts[,2, drop=FALSE],geometric = TRUE,legend.loc='right')
+```
+
+As we can see from the relative performance plot above MSFT seems to have outperformed the market quite handily over the sample period. Let's now look to the reasons underlying this performance difference by applying factor models as a means of performance attribution.
+
+---
+
+### Building the Factor Model:
+
+Now that we have our data in place and properly formatted, it is time to build the actual factor model. Using the lm() function we build a linear model where our y variable is the stock returns in excess of the risk free rate and our x variables are the other factor values as well as the MKT_RF variable representing market return in excess of the risk free rate. After fitting our model we use the summary() function to display the output as follows in the code cell below.
+
+```{r}
+MSFT_model = lm(MSFT_RF~MKT_RF+SMB+HML+MOM+BAB+QMJ, data = joint_frame)
+summary(MSFT_model)
+```
+As we can see from the factor model output above, MSFT seems to attribute majority of its performance to betting with beta since BAB is negative, large magnitude, and statistically significant. It seems that over this period MSFT represented a higher-than-average beta stock or higher than average volatility. Additionally, we can see that it also has a large negative, and significant coefficient for SMB meaning MSFT tilts more towards large caps which makes sense as MSFT is one of the largest stocks by market capitalization in the entire world. Microsoft also scores high on the profitability metric QMJ which also makes sense as the company has consistently good margins and profits. We can also see that MSFT has a slightly negative coefficient for HML however, our coefficient is not significant here so we will not consider it. Interestingly, MST finds itself a slight beneficiary of the momentum factor which is likely due to the broad momentum behind large cap tech in general over this sample period. So by breaking down the returns of MSFT and analyzing them both in the context of its fundamentals and history with our factor model we have a powerful tool at better understand the driving forces behind security returns.
+
+
+---
+
+### How Good are Factor ETF's?
+
+A recent trend on wall street has been the rise of ETF or Exchange traded funds, and among ETFs, factor strategies have been especially popular. Instead of having to use Fama and French's factors to develop your own stock portfolio to take advantage of one of these factors’ companies like Vanguard will instead do the work for you and allow you to directly invest in a large array of value companies for example via their ETF that comes with a relatively small management fee. Sounds like a great deal, right? Maybe not always. In addition to fund management fees buyers also need to consider what is really in that ETF, and it may not always be what you think. So, let's put these ETFs to the test by collecting their daily returns and running a factor analysis to see if they really track the factors, you're paying them for. First, we gather all the ticker data as before and merge it into one collective data frame. Note the tickers we pull here are as follows:
+
+- VV: Vanguard Large-Cap Equity ETF
+- VUG: Vanguard Growth ETF
+- VFQY: Vanguard Quality ETF
+- VFMV: Vanguard Low Volatility ETF
+- VFMO: Vanguard Momentum Tracking ETF
+- VTV: Vanguard Value ETF
+
+We chose to use all Vanguard funds to remain consistent, and they are one of the largest providers of Exchange traded products, so they had an ETF for each factor. In the code cell below we import the return data for each of these ETFs and return them as a data frame just as we did with the MSFT data.
+
+```{r}
+Value_ETF_data = tq_get(x='VTV',get="stock.price",from='2017-12-31',to='2021-01-01')
+Value_ETF_data = Value_ETF_data %>% tq_transmute(select=adjusted,mutate_fun=periodReturn,period="daily") %>% rename(Date=date) %>% rename(VTV=daily.returns) %>% mutate(VTV=VTV*100)
+
+MOM_ETF_data = tq_get(x='VFMO',get="stock.price",from='2017-12-31',to='2021-01-01')
+MOM_ETF_data = MOM_ETF_data %>% tq_transmute(select=adjusted,mutate_fun=periodReturn,period="daily") %>% rename(Date=date) %>% rename(VFMO=daily.returns) %>% mutate(VFMO=VFMO*100)
+
+LCAP_ETF_data = tq_get(x='VV',get="stock.price",from='2017-12-31',to='2021-01-01')
+LCAP_ETF_data = LCAP_ETF_data %>% tq_transmute(select=adjusted,mutate_fun=periodReturn,period="daily") %>% rename(Date=date) %>% rename(VV=daily.returns) %>% mutate(VV=VV*100)
+
+LVOL_ETF_data = tq_get(x='VFMV',get="stock.price",from='2017-12-31',to='2021-01-01')
+LVOL_ETF_data = LVOL_ETF_data %>% tq_transmute(select=adjusted,mutate_fun=periodReturn,period="daily") %>% rename(Date=date) %>% rename(VFMV=daily.returns) %>% mutate(VFMV=VFMV*100)
+
+Growth_ETF_data = tq_get(x='VUG',get="stock.price",from='2017-12-31',to='2021-01-01')
+Growth_ETF_data = Growth_ETF_data %>% tq_transmute(select=adjusted,mutate_fun=periodReturn,period="daily") %>% rename(Date=date) %>% rename(VUG=daily.returns) %>% mutate(VUG=VUG*100)
+
+QMJ_ETF_data = tq_get(x='VFQY',get="stock.price",from='2017-12-31',to='2021-01-01')
+QMJ_ETF_data = QMJ_ETF_data %>% tq_transmute(select=adjusted,mutate_fun=periodReturn,period="daily") %>% rename(Date=date) %>% rename(VFQY=daily.returns) %>% mutate(VFQY=VFQY*100)
+
+
+etf_data = merge(Value_ETF_data,MOM_ETF_data,by='Date')
+etf_data = merge(etf_data,LCAP_ETF_data,by='Date')
+etf_data = merge(etf_data,LVOL_ETF_data,by='Date')
+etf_data = merge(etf_data,Growth_ETF_data,by='Date')
+etf_data = merge(etf_data,QMJ_ETF_data,by='Date')
+
+head(etf_data)
+```
+Now that our data is properly collected, we merge it with the factor data frame (same as before) using the data range provided by our ETF data frame. We then construct ETF less risk free rate returns for each of the products using mutate().
+
+```{r}
+joint_etf_frame = merge(merged_frame,etf_data,by='Date') %>% mutate(VTV_RF=VTV-RF) %>% mutate(VFMO_RF=VFMO-RF) %>% mutate(VV_RF=VV-RF) %>% mutate(VFMV_RF=VFMV-RF)  %>% mutate(VUG_RF=VUG-RF) %>% mutate(VFQY_RF=VFQY-RF)
+head(joint_etf_frame)
+```
+
+Now that we have each of our ETF returns in the proper format and merged with the original factor data frame, we move on to building a factor regression model for each of the ETF. This will allow us to compare the advertised strategy with where our factor model attributes the ETF's return. We begin with Value below:
+```{r}
+Value_model = lm(VTV_RF~MKT_RF+SMB+HML+MOM+BAB+QMJ, data = joint_etf_frame)
+summary(Value_model)
+```
+As we can see above, our value ETF seems to have a positive and statistically significant coefficient for HML indicating it is likely tilted toward value. However, we can also see that MKT_RF (beta) and BAB are larger in magnitude and significant. It makes sense that these two factors behave similarly here as the portfolio itself has a beta less than one which implies betting slightly against market beta. So, with this in mind, is this ETF really tracking value or is it low beta? Next, we move onto the growth ETF.
+
+```{r}
+Growth_model = lm(VUG_RF~MKT_RF+SMB+HML+MOM+BAB+QMJ, data = joint_etf_frame)
+summary(Growth_model)
+```
+Interestingly, the growth factor model shows much of the same conclusions as the value model previously discussed. It has a negative coefficient for HML which is significant as we would expect from a growth portfolio, but again other factors like BAB have larger magnitudes and a more significant coefficient. Again, some of this can be explained via the similarity of a negative BAB coefficient (high beta) as growth stocks typically fall within this category. Still, it’s interesting that growth is not our biggest driver of return for the model. Next, we move onto momentum.
+
+```{r}
+MOM_model = lm(VFMO_RF~MKT_RF+SMB+HML+MOM+BAB+QMJ, data = joint_etf_frame)
+summary(MOM_model)
+```
+
+It would make sense that there would be similar coefficients between smaller companies and growth given small companies have more upward potential than mega caps, but the momentum trend is not a natural correlation we would expect to correspond with small caps. It turns out again that a value other than the one we are supposed to be tracking is the most significant performance attribute under the factor model. Also, notable, is given the dates we chose to pull we have sampled from a period in the stock market where growth tech companies have juiced market returns for the past several years and have become momentum names as well growth names. Next, we move onto quality.
+
+```{r}
+QMJ_model = lm(VFQY_RF~MKT_RF+SMB+HML+MOM+BAB+QMJ, data = joint_etf_frame)
+summary(QMJ_model)
+```
+Again, our factor model clearly shows that SMB makes a larger contribution to the portfolio's performance than the QMJ factor. This portfolio according to our model resembles a portfolio of small caps rather than a portfolio built on highly profitable firms. This distinction is quite interesting as most small firms have yet to become profitable and are still growing typically in a quality factor-based portfolio you would see more mid and large caps that have expanded margins with scale. Next, we move onto a large cap ETF.
+
+
+```{r}
+Lcap_model = lm(VV_RF~MKT_RF+SMB+HML+MOM+BAB+QMJ, data = joint_etf_frame)
+summary(Lcap_model)
+```
+Finally, after 5 different factor ETFs we have one that resembles what our model would generally expect. The largest and most significant coefficient is the negative SMB coefficient which indicates that we are indeed tilted toward large caps. Lastly, we test the low beta portfolio against the BAB factor.
+
+```{r}
+Lvol_model = lm(VFMV_RF~MKT_RF+SMB+HML+MOM+BAB+QMJ, data = joint_etf_frame)
+summary(Lvol_model)
+```
+
+Like the large cap portfolio before it, the low volatility ETF lives up to its name given the large positive magnitude of the BAB coefficient which is also very statistically significant. So, out of the six ETF's only two truly lived up to our factor model's expectation for that given strategy. Analysis like this should not be taken as definitive as there are many well managed ETF's out there and factor models with simple regression are not by any means the absolute answer, but I believe it shows the value of informed investing. 
+
+---
+
+
+### Impact of Factors Over Time:
+
+The effectiveness of style factors can vary greatly over different periods of time, and although each of the factors presented by Fama and French have had some "staying power" over market history, each has seen their high and low points when it comes to being a profitable strategy. In order to examine this further let us look at some of the performance history of each of the factor by using a simple moving average of the factor values to smooth out some of the daily noise. The SMA will also tell us the average value of that given factor over the rolling window which will help us better understand strong and weak periods for each side of the factors two strategies. Below we use the same factor data frame from above and convert it to a time series. Also note that for these visualizations, we are interested in how long and consistently a given factor remains different from zero. If factors had no predictive value, we should only see oscillation around zero.
+
+
+First, we revist our inital factor frame from earlier.
+
+```{r}
+factor_frame = merged_frame %>% select(Date,HML,SMB,QMJ,BAB,MOM)
+factor_frame.xts = xts(factor_frame[,-1],order.by=as.Date(factor_frame[,1],"%Y%m%d"))
+head(factor_frame.xts)
+```
+
+After formatting it as a proper xts object we use ggplot2 to calculate and plot our various moving averages for each factor. To calculate this moving average we utilize ggplot's built in support for geometric series moving averages via the geom_ma() function as shown below. We continue this process of charting for each of the factors in our data frame.
+
+```{r}
+factor_frame %>% ggplot(aes(x=Date, y =HML)) + geom_ma(ma_fun = SMA, n = 200, linetype = 5, size = 1.25) + labs(title = "HML Factor Over Time", subtitle = "HML 200 day SMA", y = "Factor Value", x = "") + theme_tq()
+```
+
+We see a consistently positive HML factor between the mid 90’s to the leadup to the dotcom bubble where growth stole the show. HML returned to favor directly after and during the dotcom bubble as value investors like Buffet lead the new era of value invested decrying the growth craze of the dotcom bubble. We can also see that HML has been somewhat negative as of late which is consistent with what is going on in markets currently growth trades at a significant premium. 
+
+```{r}
+factor_frame %>% ggplot(aes(x=Date, y =SMB)) + geom_ma(ma_fun = SMA, n = 200, linetype = 5, size = 1.25) + labs(title = "SMB Factor Over Time", subtitle = "HML 200 day SMA", y = "Factor Value", x = "") + theme_tq()
+```
+
+For SMB, the trends are much less obvious our of all the factors this plot seems to indicate the smallest magnitude differences from the zero axis. This constant oscillation around zero indicates that this factor may not be as reliable or consistent as some of the others we observe.
+
+```{r}
+factor_frame %>% ggplot(aes(x=Date, y =QMJ)) + geom_ma(ma_fun = SMA, n = 200, linetype = 5, size = 1.25) + labs(title = "QMJ Factor Over Time", subtitle = "HML 200 day SMA", y = "Factor Value", x = "") + theme_tq()
+```
+The QMJ factor chart seems to strongly resemble that of the HML factor. We can see that a positive skew to QMJ seems constant throughout the period with again sharp moves around the 2000's dotcom bubble. This is expected given our analysis of the HML factor in the historical context of the dotcom crash as growth companies with little current profits (but high expectations looking forward) played a dominant role in the collapse of the market during this time which was subsequently followed by an investor craze towards profitable and value stocks as a panacea for the mistakes made in growth.
+
+```{r}
+factor_frame %>% ggplot(aes(x=Date, y =BAB)) + geom_ma(ma_fun = SMA, n = 200, linetype = 5, size = 1.25) + labs(title = "BAB Factor Over Time", subtitle = "HML 200 day SMA", y = "Factor Value", x = "") + theme_tq()
+```
+The BAB factor seems unique in that it remains fairly constant oscillating around zero not indicating much predicting power in the positive or negative direction just look like a noisy plot. However, BAB shines during recessions when investors flee to market safe havens which is where and when BAB gains its performance. These large spikes skew average performance of BAB over the horizon making it an important factor. It is because of this trait that academics have noted that less risky companies tend to trade higher than they should many call this the insurance or safety premium. This refers to the extra cost to hold safe assets created by excess market demand for low volatility securities.
+
+```{r}
+factor_frame %>% ggplot(aes(x=Date, y =MOM)) + geom_ma(ma_fun = SMA, n = 200, linetype = 5, size = 1.25) + labs(title = "MOM Factor Over Time", subtitle = "HML 200 day SMA", y = "Factor Value", x = "") + theme_tq()
+```
+Finally, we move onto momentum which as we expect seems to have a pretty strong tendency towards positive observation most of the time. Again, through we see some strong divergence in the dotcom crisis and more specifically the housing crisis of 2008.
+
+The charts above should give you a sense of how erratic these factors behave even under 200 day smoothing. Also notable is the steep peaks in each chart that correspond generally to the same time across all factors this happens in the early 2000's right around the infamous Dotcom bubble. In times of market turbulence such as this as well as 2008 all strategies tend to decouple quickly from their past performance and actually begin to move with one another. We can clearly see that many of these strategies tend (depending on which side you take) to have a persistence over this time period despite some rather long or quick and deep periods of underperformance, the factors generally live up to their proposed behavior. 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

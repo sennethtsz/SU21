@@ -1,0 +1,206 @@
+---
+title: "Week7_Advanced"
+author: "Parth Gada"
+date: "3/5/2021"
+output: html_document
+---
+## The objective of this code is to implement the different ratios that were learned in Week 7 and understand when to use which ratio, as well as the differences between each of them. 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+#Loading the required libraries
+
+```{r}
+library(tidyverse)
+library(tidyquant)
+library(PerformanceAnalytics)
+library(xts)
+library(lubridate)
+
+```
+# Tidyquant is one of the best resources for collecting and analyzing financial data. It has several functions that allow seamless data manipulation. Some of these that we have used here are: 
+#1. Getting Financial Data: tq_get(). This is a one-stop shop for getting web-based financial data in a “tidy” data frame format. Get data for daily stock prices (historical), key statistics (real-time), key ratios (historical), financial statements, dividends, splits, economic data from the FRED, FOREX rates from Oanda.
+#2.Manipulating Financial Data: tq_transmute() and tq_mutate(). Integration for many financial functions from xts, zoo, quantmod,TTR and PerformanceAnalytics packages. tq_mutate() is used to add a column to the data frame, and tq_transmute() is used to return a new data frame which is necessary for periodicity changes.
+#3. Performance Analysis and Portfolio Analysis: tq_performance() and tq_portfolio(). PerformanceAnalytics functions. tq_performance() converts investment returns into performance metrics. tq_portfolio() aggregates a group (or multiple groups) of asset returns into one or more portfolios.
+
+## You can use other packages or apis like Quandl or Riingo, but the ease of data manipulation is why here I have chosen to use Tidyquant. 
+
+```{r}
+
+stock_prices <- c("BIIB", "RDY", "GSK","PFE","JNJ","COST","PG","PEP","CL","BA","NOC","GD","HSBC","JPM","MS","WFC","AAPL","GOOG","NFLX","AMZN") %>%
+    tq_get(get  = "stock.prices",
+           from = "2010-01-01",
+           to   = "2018-06-01")
+```
+# Here we used tq_get() fuction of TidyQuant to get the stock data off the web into a dataframe. The first 5 stocks in stock_prices are pharma stocks, with the rest being a mix of defence, fmcg, banking and tech to diversify the portfolio that we will create. 
+
+```{r}
+stock_returns_monthly <- stock_prices %>%
+    group_by(symbol) %>%
+    tq_transmute(select     = adjusted, 
+                 mutate_fun = periodReturn, 
+                 period     = "monthly", 
+                 col_rename = "Ra")
+```
+# Using the transmutate function to just take the adjusted column of the stock price and compute each stock's monthly returns. 
+
+```{r}
+wts <- c(0.2,0.2,0.2,0.2,0.2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0)
+wts2 <- c(0.05,0.05,0.05,0.05,0.05,0.05,0.05,0.05,0.05,0.05,0.05,0.05,0.05,0.05,0.05,0.05,0.05,0.05,0.05,0.05)
+portfolio_returns_monthly <- stock_returns_monthly %>%
+    tq_portfolio(assets_col  = symbol, 
+                 returns_col = Ra, 
+                 weights     = wts2,  
+                 col_rename  = "Ra") %>% mutate(date=substring(date,1,7)) %>%
+  rename(Date=date)
+```
+# defining weights for 2 cases: 1 where we are using only pharma stocks (wts) in our portfolio and the other where we are using the entire diversified stock portfolio (wts2) to compute the ratios. 
+
+# We use tq_portfolio() to calculate weighted returns of our portfolio each month. 
+
+```{r}
+contra_fund<-read.csv("contrafund.csv") 
+contra_fund$Date<-mdy(contra_fund$Date) 
+contra_fund <- contra_fund %>% mutate(Date=substring(Date,1,7))
+```
+
+#Reading contrafund CSV for comparison and to get market and risk free data
+
+
+```{r}
+
+final_portfolio <- left_join(portfolio_returns_monthly, 
+                                   contra_fund,
+                                   by = "Date") %>% mutate(Date=paste(Date,"01",sep="-"))
+
+final_portfolio$Date <- as.Date(as.character(final_portfolio$Date))
+
+
+final_data <-xts(final_portfolio[,-1],final_portfolio$Date)
+```
+## Joining the final portfolio with contra fund and converting it to xts object as an input to compute ratios
+
+```{r}
+SharpeRatio(final_data$ContraRet,final_data$Risk.Free)
+SharpeRatio(final_data$Ra,final_data$Risk.Free)
+
+
+Return.cumulative(final_data, geometric =TRUE)
+chart.CumReturns(final_data, wealth.index =FALSE, geometric = TRUE)
+```
+
+
+## using ggplot as an alternative visualization tool 
+```{r}
+ggplot_demo <- final_portfolio %>% mutate(Market.Return=Market.Return+1,ContraRet=ContraRet+1)%>%mutate(Market_Cumul = cumprod(Market.Return),Contra_cumul = cumprod(ContraRet)) %>% select(Date,Market_Cumul,Contra_cumul)
+
+ggplot(ggplot_demo, aes(x=Date,y=Market_Cumul))+geom_line(color="blue")+geom_line(aes(x=Date,y=Contra_cumul),color="black")+ggtitle("Portfolio Cumulative Returns over Time")+xlab("Year")+ylab("Cumulative Returns")
+
+```
+## computing Sharpe Ratios and plotting cumulative returns of the portfolio. You will be able to see the difference a diversified portfolio makes in eliminating firm specific (unsystematic) risk.
+
+
+## Disadvantage of Sharpe Ratio: It relies on standard deviation with a normal distribution curve. Skewed distributions with rare occurrences could therefore result in inflated Sharpe ratios that do not address the whole story about the volatility of the investment.
+
+
+```{r}
+
+treynor_prices1 <- c("NVS","ZTS","NVO","BHC","SYN","WMT","PG","COKE","CL","BA","NOC","GD","CIT","JPM","PNC","BAC","MSFT","GOOG","FB","AMZN") %>%
+    tq_get(get  = "stock.prices",
+           from = "2010-01-01",
+           to   = "2018-06-01")
+```
+## Creating another diversified portfolio treynor_prices1 with the same asset classes as stock_prices but with different stocks. The original diversified portfolio and the new oone created above will be compared to see which portfolio has a higher treynor ratio. 
+
+
+```{r}
+treynor_returns_monthly <- stock_prices %>%
+    group_by(symbol) %>%
+    tq_transmute(select     = adjusted, 
+                 mutate_fun = periodReturn, 
+                 period     = "monthly", 
+                 col_rename = "Ra")
+
+wts <-c(0.05,0.05,0.05,0.05,0.05,0.05,0.05,0.05,0.05,0.05,0.05,0.05,0.05,0.05,0.05,0.05,0.05,0.05,0.05,0.05)
+treynor_returns_monthly <- treynor_returns_monthly %>%
+    tq_portfolio(assets_col  = symbol, 
+                 returns_col = Ra, 
+                 weights     = wts,  
+                 col_rename  = "Ra") %>% mutate(date=substring(date,1,7)) %>%
+  rename(Date=date)
+
+
+final_treynor <- left_join(treynor_returns_monthly, 
+                                   contra_fund,
+                                   by = "Date") %>% mutate(Date=paste(Date,"01",sep="-"))
+
+final_treynor$Date <- as.Date(as.character(final_treynor$Date))
+
+
+treynor_ratio <-xts(final_treynor[,-1],final_treynor$Date)
+
+TreynorRatio(treynor_ratio$ContraRet,treynor_ratio$Risk.Free)
+TreynorRatio(treynor_ratio$Ra,treynor_ratio$Risk.Free)
+
+
+Return.cumulative(treynor_ratio, geometric =TRUE)
+chart.CumReturns(treynor_ratio, wealth.index =FALSE, geometric = TRUE)
+
+
+
+
+```
+## Repeating the same steps as we did for computation of the Sharpe Ratio. 
+
+## Disadvantage of Treynor Ratio: It is backward-looking and that it relies on using a specific benchmark to measure beta. Most investments, though, don't necessarily perform the same way in the future that they did in the past.
+
+
+
+```{r}
+etf_prices <- c("QQQ","XME") %>%
+    tq_get(get  = "stock.prices",
+           from = "2010-01-01",
+           to   = "2018-06-01")
+
+```
+## Getting the prices of 2 ETF's: Invesco QQQ and SDPR S&P Metals and Mining ETF(XME) to compare the performance of the 2 funds using Alpha as the ratio. 
+
+```{r}
+etf_returns_monthly <- etf_prices %>%
+    group_by(symbol) %>%
+    tq_transmute(select     = adjusted, 
+                 mutate_fun = periodReturn, 
+                 period     = "monthly", 
+                 col_rename = "Ra")
+
+wts <- c(1,0)
+wts2 <- c(0,1)
+etf_final_returns <- etf_returns_monthly %>%
+    tq_portfolio(assets_col  = symbol, 
+                 returns_col = Ra, 
+                 weights     = wts2,  
+                 col_rename  = "Ra") %>% mutate(date=substring(date,1,7)) %>%
+  rename(Date=date)
+
+
+etf_alpha <- left_join(etf_final_returns, 
+                                   contra_fund,
+                                   by = "Date") %>% mutate(Date=paste(Date,"01",sep="-"))
+
+etf_alpha$Date <- as.Date(as.character(etf_alpha$Date))
+
+
+etf_res<-xts(etf_alpha[,-1],etf_alpha$Date)
+etf_res<-transform(etf_res,MktExcess=Market.Return-Risk.Free,FundExcess=Ra-Risk.Free)
+
+Alpha=lm(FundExcess~MktExcess,data=etf_res)
+summary(Alpha)
+
+
+Return.cumulative(etf_res, geometric =TRUE)
+chart.CumReturns(etf_res, wealth.index =FALSE, geometric = TRUE)
+```
+## The alpha is a very good measure of assessing a fund's performance. The CAPM assumes that the markets are efficient and so there is no way to systematically earn returns that exceed the broad market as a whole. Hence any excess return earned on top of CAPM predicted returns is captured by alpha and is a good indicator of the performance of the fund. 
+
+##Other ratios worth exploring: 1. M squared Measure 2. Information Ratio

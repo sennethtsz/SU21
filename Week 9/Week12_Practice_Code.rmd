@@ -1,0 +1,122 @@
+---
+title: "Week_12"
+author: "Monil Joshi"
+date: "12/03/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE,message = FALSE)
+```
+
+Libraries
+```{r}
+library(dplyr)
+library(queueing)
+library(readr)
+```
+
+
+Solutions:
+```{r}
+Queue <- read_csv("C:/Queue.csv")
+head(Queue)
+
+# QUESTION 1
+#Monday <- Queue[Queue$Day == 'Monday',]
+Monday <- filter(Queue, Day == "Monday")
+Tuesday <- filter(Queue, Day == "Tuesday")
+Wednesday <- filter(Queue, Day == "Wednesday")
+
+# Number of customers arriving on Monday
+number_of_customers_mon = nrow(Monday)
+number_of_customers_tue = nrow(Tuesday)
+number_of_customers_wed = nrow(Wednesday)
+
+# Average hourly arrival rate
+lambda_mon = number_of_customers_mon/7
+lambda_tue = number_of_customers_tue/8
+lambda_wed = number_of_customers_wed/7
+
+print(paste("The arrival rate on tuesday is ",lambda_tue," customers/hour"))
+print(paste("The arrival rate on Wednesday is ",lambda_wed," customers/hour"))
+
+
+# QUESTION 2
+# total service rate on the 3 days
+mu_mon = 127.05
+mu_tue = 110.84
+mu_wed = 208.78
+
+# Utilization rate
+utilization_mon = lambda_mon/mu_mon
+utilization_tue = lambda_tue/mu_tue
+utilization_wed = lambda_wed/mu_wed
+
+print(paste("The utilisation rate on Monday is", utilization_mon))
+print(paste("The utilisation rate on Tuesday is", utilization_tue))
+print(paste("The utilisation rate on Wednesday is", utilization_wed))
+
+# QUESTION 3
+# Average number of customers in the systerm per hour
+Ls_mon = lambda_mon/(mu_mon - lambda_mon)
+Ls_tue = lambda_tue/(mu_tue - lambda_tue)
+Ls_wed = lambda_wed/(mu_wed - lambda_wed)
+
+print(paste("The average number of customers in the system on Monday is", Ls_mon))
+print(paste("The average number of customers in the system on Tuesday is", Ls_tue))
+print(paste("The average number of customers in the system on Wednesday is", Ls_wed))
+
+# Average number of customers in the queue per hour
+Lq_mon = Ls_mon * utilization_mon
+Lq_tue = Ls_tue * utilization_tue
+Lq_wed = Ls_wed * utilization_wed
+
+print(paste("The average number of customers in the queue on Monday is", Lq_mon))
+print(paste("The average number of customers in the queue on Tuesday is", Lq_tue))
+print(paste("The average number of customers in the queue on Wednesday is", Lq_wed))
+
+
+# QUESTION 4
+# Average time customers spends in system (in hours)
+Ws_mon = Ls_mon/lambda_mon 
+Ws_tue = Ls_tue/lambda_tue
+Ws_wed = Ls_wed/lambda_wed
+
+print(paste("The average time a customer spends in the system on Monday is", Ws_mon))
+print(paste("The average time a customer spends in the system on Tuesday is", Ws_tue))
+print(paste("The average time a customer spends in the system on Wednesday is", Ws_wed))
+
+# Average time customers spends in Queue (in hours)
+Wq_mon = Lq_mon/lambda_mon
+Wq_tue = Lq_tue/lambda_tue
+Wq_wed = Lq_wed/lambda_wed
+
+print(paste("The average time a customer spends in the queue on Monday is", Ws_mon))
+print(paste("The average time a customer spends in the queue on Tuesday is", Ws_tue))
+print(paste("The average time a customer spends in the queue on Wednesday is", Ws_wed))
+
+
+# QUESTION 6
+#probability of 100 people in the system
+pn_mon = (1- utilization_mon)*((utilization_mon)^100)
+
+print(paste("Probability of having 100 customers in the system on Monday",pn_mon))
+
+```
+
+Question 6
+Queue Package in R
+```{r}
+#Inputs to our MM1 model
+i_mm1 <- NewInput.MM1(lambda = 125.71, mu = 127.05, n = 100)
+
+## Build the model
+o_mm1 <- QueueingModel(i_mm1)
+
+Report(o_mm1)
+
+```
+
+Question 7
+The wait times and queues on Monday are much higher compared to the other days and the bank should increase the number of servers on Monday.

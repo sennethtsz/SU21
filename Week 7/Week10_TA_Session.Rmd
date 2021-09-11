@@ -1,0 +1,318 @@
+In this following notebook we will be examining a dataset with financial information regarding a series of loans and whether or not they defaulted or not.
+
+The goal is to utilize ggplot and other plotting packages to perform exploratory data analyisis to interpret the dataset, and subsequently fit a logisitic regression model to predict whether or not they default or not.
+
+
+Load relevant packages. 
+```{r,warning=FALSE, results='hide',message=FALSE}
+
+library(readr) #To read the dataset
+library(tidyverse) #For data manipulation and visual analytics
+
+library(correlationfunnel)
+library(DataExplorer)
+
+library(WVPlots)
+library(ggthemes)
+
+library(corrplot)
+
+
+library(ROCR)
+
+library(caret)
+#library(reshape2)
+  
+
+```
+
+
+Load the dataset. We change the default column to factor for plotting.
+```{r}
+dataset <- read.csv('C:/Users/tanut/Documents/Data Analytics for Business TA/lc_loans_2007_2014_edit.csv')
+dataset <- dataset %>%
+  mutate(Default = as.factor(Default))
+
+dataset$Default = as.factor(dataset$Default)
+
+
+```
+
+
+Let us take a perfunctory look at the data before we start to construct a model.
+```{r}
+head(dataset)
+
+summary(dataset)
+
+length(unique(dataset$home_ownership))
+
+
+```
+
+For predictive analytics it is useful to ensure the dataset is complete, or largely complete. The simplest ininital step is to check for missing values and then deal with them accordingly. Models can suffer greatly due to missing data; especially regression based models. 
+
+```{r}
+dataset %>% 
+  plot_missing()
+
+```
+
+Remove the NAs from avg_cur_bal
+```{r}
+dataset <- dataset %>% drop_na("avg_cur_bal")
+
+dataset%>%
+plot_missing()
+
+dataset <-dataset %>% drop_na(c("emp_length","bc_util"))
+
+```
+
+
+
+Can create histograms to look at distributions of certain variables
+```{r}
+
+dataset %>% plot_histogram(ggtheme = theme_economist_white())
+
+ggplot(data= dataset) +
+  geom_histogram(aes(Age),bins=23)+
+  theme_economist_white()
+
+```
+
+For categorical variables, it is more suitable to plot bar charts. This can again be done by 2 ways: Using plot_bar() to automatically generate them for the catgorical variables. Or through ggplot, where each bar can be constructed individually.
+```{r}
+
+dataset %>% plot_bar(ggtheme = theme_economist_white())
+
+
+ggplot(data = dataset,aes(home_ownership)) +
+  geom_bar()+
+  theme_economist_white()
+
+
+ggplot(data=dataset,aes(home_ownership))+
+  geom_bar(aes(fill=as.factor(dataset$Default)))
+
+```
+
+Now changing home ownership to simply the 3 useful possibilities.
+```{r}
+dataset <- dataset%>% 
+mutate(home_ownership= dplyr::case_when(home_ownership== 'MORTGAGE'~0,home_ownership=='RENT'~1,home_ownership=='OWN'~2))
+
+
+sum(is.na(dataset$home_ownership))
+
+
+dataset2 <-na.omit(dataset)
+
+
+sum(is.na(dataset2$home_ownership))
+
+
+
+
+ggplot(data=dataset2,aes(home_ownership))+
+  geom_bar(aes(fill=as.factor(dataset2$Default)))
+
+
+```
+
+Next we can construct boxplots to observe the distribution of continuous variables. It is useful to do this by some grouping. For this case, it is valuable to see the variation of distributions according to whether or not people clicked on the add or not. 
+
+Again DataExplorer offers us the function plot_boxplot by which we can automatically generate boxplots for all the continuous variables and assign a grouping variable. 
+
+This can also be done individually by ggplot:
+```{r}
+
+
+dataset2 %>% plot_boxplot(by="Default",geom_boxplot_args= list("outlier.size" = -1, "coef" = 1e30))
+
+```
+
+
+As our logistic model will aim to predict if a person will click on an ad not, we need some benchmark of accuracy to beat. A natural choice is the empirical probability of a person clicking the ad or not. This simply means the percentage of people in the data that have clicked the ad versus not.
+
+Below we cleanly plot the distribution of ad clicks as well as the percentage of each.
+```{r}
+
+
+dataset2 %>% 
+  dplyr::count(Default) %>%
+  dplyr::mutate(total = sum(n),
+         percentage = n/total) %>% 
+  ggplot(aes(x = Default, y = n)) +
+  geom_col(aes(fill = Default), width = .3) +
+  geom_text(aes(label = paste(round(percentage, 2) * 100, "%", sep = "")), nudge_y = 20)+
+  theme_economist_white()
+
+
+```
+
+
+Now we can explore which variables are related, and in particular how they scale with whether a person clicked the ad or not.
+
+We can easily do this using the PairPlot function from the WVPlots package. 
+
+For a scatter plot of 2 variables, we can use ggplot again, and shape the points based on whether they clicked the ad or not.
+```{r}
+#library(WVPlots)
+
+PairPlot(dataset2, 
+         colnames(dataset2)[4:7], 
+         "Pairplot",point_color = "red")
+
+
+ggplot(dataset2[1:1000,],aes(x=loan_amnt, y=annual_inc,shape=Default,color=Default))+
+  geom_point()+theme_economist_white() +ylim(0,2e5)
+
+```
+
+Again we do this for Daily Time Spent on Site.
+```{r}
+
+ggplot(dataset[1:500,],aes(x=dti, y=annual_inc,shape=Default,color=Default))+
+  geom_point()+theme_economist_white()
+
+
+
+```
+
+
+Now often we may have datasets with a large number of variables. Using all variables for the model is not always desired, as it creates a significant risk of overfitting. This overfitting would then mean the model would have worse out of sample performance than perhaps a simpler model.
+
+So to identify valuable variables, it is often useful to look at their correlations with out response variable. One way to neatly evaluate these is to create a 'correlation funnel'.
+
+The code below, firstly selects only the numeric variables, then creates it into bins and then calculates the correlations based on whether they clicked on the ad or not.
+
+Then it plots these correlations.
+```{r}
+
+
+#corr_mat = cor(dataset, method = c("spearman"))
+
+dataset2 %>%
+  mutate_if(is.numeric,as.numeric)%>%
+    binarize() %>% #bins the data immidiately 
+    correlate(Default__1) %>%  #correlate just creates correlations plots 
+    plot_correlation_funnel(interactive = TRUE, alpha = 0.7)
+
+
+
+
+```
+
+Now from our correlation funnel, we will select the top 5 correlated variables
+```{r}
+
+classic_model <- 
+  glm(Default ~ annual_inc + bc_open_to_buy + tot_hi_cred_lim + avg_cur_bal, family = "binomial", data = dataset2)
+
+
+summary(classic_model)
+```
+
+
+Now we will use this model to predict the defaults or not on the same data. Note it is typical to split the data into training and test, but for simplicity, we will simply test on our initial training set.   
+```{r}
+dataset2$model_prob <- predict(classic_model, dataset2, type = "response")
+```
+
+Now let us define some threshold for click or not, so that we can compare accuracies.
+```{r}
+dataset2 <-dataset2 %>%
+  mutate(model_predict_default = case_when(model_prob>0.18~1,TRUE~0))
+
+dataset2 <- dataset2 %>% 
+  mutate(model_predict_default = as.factor(model_predict_default))
+
+ggplot(data=dataset2) +
+  geom_bar(aes(x=model_predict_default))
+
+```
+
+
+
+```{r}
+
+draw_confusion_matrix <- function(cm) {
+
+  layout(matrix(c(1,1,2)))
+  par(mar=c(2,2,2,2))
+  plot(c(100, 345), c(300, 450), type = "n", xlab="", ylab="", xaxt='n', yaxt='n')
+  title('CONFUSION MATRIX', cex.main=2)
+
+  # create the matrix 
+  rect(150, 430, 240, 370, col='#3F97D0')
+  text(195, 435, '0', cex=1.2)
+  rect(250, 430, 340, 370, col='#F7AD50')
+  text(295, 435, '1', cex=1.2)
+  text(125, 370, 'Predicted', cex=1.3, srt=90, font=2)
+  text(245, 450, 'Actual', cex=1.3, font=2)
+  rect(150, 305, 240, 365, col='#F7AD50')
+  rect(250, 305, 340, 365, col='#3F97D0')
+  text(140, 400, '0', cex=1.2, srt=90)
+  text(140, 335, '1', cex=1.2, srt=90)
+
+  # add in the cm results 
+  res <- as.numeric(cm$table)
+  text(195, 400, res[1], cex=1.6, font=2, col='white')
+  text(195, 335, res[2], cex=1.6, font=2, col='white')
+  text(295, 400, res[3], cex=1.6, font=2, col='white')
+  text(295, 335, res[4], cex=1.6, font=2, col='white')
+
+  # add in the specifics 
+  plot(c(100, 0), c(100, 0), type = "n", xlab="", ylab="", main = "DETAILS", xaxt='n', yaxt='n')
+  text(10, 85, names(cm$byClass[1]), cex=1.2, font=2)
+  text(10, 70, round(as.numeric(cm$byClass[1]), 3), cex=1.2)
+  text(30, 85, names(cm$byClass[2]), cex=1.2, font=2)
+  text(30, 70, round(as.numeric(cm$byClass[2]), 3), cex=1.2)
+  text(50, 85, names(cm$byClass[5]), cex=1.2, font=2)
+  text(50, 70, round(as.numeric(cm$byClass[5]), 3), cex=1.2)
+  text(70, 85, names(cm$byClass[6]), cex=1.2, font=2)
+  text(70, 70, round(as.numeric(cm$byClass[6]), 3), cex=1.2)
+  text(90, 85, names(cm$byClass[7]), cex=1.2, font=2)
+  text(90, 70, round(as.numeric(cm$byClass[7]), 3), cex=1.2)
+
+  # add in the accuracy information 
+  text(30, 35, names(cm$overall[1]), cex=1.5, font=2)
+  text(30, 20, round(as.numeric(cm$overall[1]), 3), cex=1.4)
+  text(70, 35, names(cm$overall[2]), cex=1.5, font=2)
+  text(70, 20, round(as.numeric(cm$overall[2]), 3), cex=1.4)
+}  
+
+
+```
+
+
+
+Plotting confusion matrix
+```{r}
+Confusion_mat = confusionMatrix(dataset2$model_predict_default, dataset2$Default)
+
+
+draw_confusion_matrix(Confusion_mat)
+
+```
+
+Now we can calculate the AUC, which is often a better measure, particularly when considering imbalanced data.
+The ROCR package assists in this.
+
+Firstly we create a prediction object using the real and predicted values. Then we created an ROC object from which we could calculate the AUC.  
+```{r}
+
+predicts <- prediction(as.numeric(dataset2$model_predict_default),as.numeric(dataset2$Default))
+roc <- performance(predicts,"tpr", "fpr")
+plot(roc,main="ROC curve for GLM model")
+
+
+auc_ROCR <- performance(predicts, measure = "auc")
+auc_ROCR <- auc_ROCR@y.values[[1]]
+print(paste("AUC value for logistic regression: ",auc_ROCR))
+
+
+```
+

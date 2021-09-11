@@ -1,0 +1,91 @@
+---
+title: "Week14_TAsession"
+author: ""
+date: "4/4/2020"
+output: html_document
+---
+
+
+Packages needed.
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(fpp2)
+
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+goog data set
+* google stock data present in fpp2
+
+```{r}
+head(goog)
+```
+```{r}
+# create training and validation of the Google stock data
+goog.train <- window(goog, end = 900)
+goog.test <- window(goog, start = 901)
+
+```
+
+Simple exponential smoothing
+alpha: Value of smoothing parameter for the level
+h: Number of periods for forecasting.
+```{r}
+ses.goog <- ses(goog.train, alpha = .2, h = 100)
+autoplot(ses.goog)
+```
+Remove the trend
+
+```{R}
+goog.dif <- diff(goog.train) 
+#goog.dif represents the change in stock price from the previous day
+autoplot(goog.dif)
+```
+Differencing it effectively removes the rend from the data
+```{R}
+ses.goog.dif <- ses(goog.dif, alpha = .2, h = 100)
+autoplot(ses.goog.dif)
+```
+```{r}
+goog.dif.test <- diff(goog.test)
+accuracy(ses.goog.dif, goog.dif.test)
+```
+
+Identifying optimal alpha parameter
+```{R}
+# identify optimal alpha parameter
+alpha <- seq(.01, .99, by = .01)
+RMSE <- NA
+for(i in seq_along(alpha)) {
+  fit <- ses(goog.dif, alpha = alpha[i], h = 100)
+  RMSE[i] <- accuracy(fit, goog.dif.test)[2,2]
+}
+
+# convert to a data frame and idenitify min alpha value
+alpha.fit <- data_frame(alpha, RMSE)
+alpha.min <- filter(alpha.fit, RMSE == min(RMSE))
+
+# plot RMSE vs. alpha
+ggplot(alpha.fit, aes(alpha, RMSE)) +
+  geom_line() +
+  geom_point(data = alpha.min, aes(alpha, RMSE), size = 2, color = "blue")  
+```
+```{R}
+# refit model with alpha = .05
+ses.goog.opt <- ses(goog.dif, alpha = .01, h = 100)
+
+# performance evaluations\
+accuracy(ses.goog.opt, goog.dif.test)
+
+# plotting results
+p1 <- autoplot(ses.goog.opt) +
+  theme(legend.position = "bottom")
+p2 <- autoplot(goog.dif.test) +
+  autolayer(ses.goog.opt, alpha = .5) +
+  ggtitle("Predicted vs. actuals for the test data set")
+
+gridExtra::grid.arrange(p1, p2, nrow = 1)
+```
+ *The predicted confidence intervals are narrower (left chart). 
+ *The predicted versus actuals (right chart) you see that for most observations, our predicted confidence intervals did well.
